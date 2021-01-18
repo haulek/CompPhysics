@@ -1,0 +1,36 @@
+This directory contains C++, fortran90, perl and python code
+for Mandelbrot set generation.
+
+Makefile is provided and the c++/fortran codes can be compiled by typing
+"make"
+
+The executables and objects can be cleaned by typing
+"make clean"
+
+However, you might need to slightly edit makefile
+
+These programs print results on the screen. Redirection of output is needed. 
+Execute the programs by:
+
+fortran:
+  ./mandf > mand.dat
+c++:
+  ./mandc > mand.dat
+perl:
+  ./mandp.pl > mand.dat
+python:
+  ./manp.py  
+
+A short script is provided for plotting the output. Use
+"gnuplot gnu.sh"
+to plot.
+
+You can also run
+  ./manp_numba.py
+which uses numba to speed up the execution.
+
+Finally,
+  ./manp_dynamic.py
+display mandelbrot, and have resizing capability. Just zoom-in the region, and the plot will be refreshed.
+
+

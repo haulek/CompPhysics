@@ -1,13 +1,17 @@
 from numpy import *
 import matplotlib.pyplot as plt
 import scipy.integrate as integrate
-import matplotlib.animation as animation
+
+import matplotlib.animation as animation # 
+
+from numba import jit  # This is the new line with numba
 
 g =  9.8 # acceleration due to gravity, in m/s^2
 L = 1.0 # length of pendulums
 m = 1.0 # mass of pendulums
 
-def derivs(x,t):
+@jit(nopython=True)
+def dx(x,t):
     """
     The right-hand side of the pendulum ODE
     x=[x1,x2,x3,x4]
@@ -21,29 +25,31 @@ def derivs(x,t):
     return array([dx1,dx2,dx3,dx4])
 
 # create a time array from 0..100 sampled at 0.1 second steps
-dt = 0.03
-t = arange(0.0, 20, dt)
 
-# th1 and th2 are the initial angles (degrees)
-# w10 and w20 are the initial angular velocities (degrees per second)
-th1 = 120.0
-th2 = -10.0
-w1 = 0.0
-w2 = 0.0
-
+# independent variable time
+t = linspace(0,20.,800)
+dt = t[1]-t[0]
 # initial state
-x0 = array([th1, th2, w1, w2])*pi/180.
+x0 = array([pi/2, -pi/2, 0, 0])
 
 # integrate your ODE using scipy.integrate.
-x = integrate.odeint(derivs, x0, t)
+x = integrate.odeint(dx, x0, t)
 
 x1 =  L*sin(x[:,0])
 y1 = -L*cos(x[:,0])
-x2 =  L*sin(x[:,1]) + x1
-y2 = -L*cos(x[:,1]) + y1
+x2 = x1 + L*sin(x[:,1])
+y2 = y1 - L*cos(x[:,1])
 
-fig = plt.figure()
-ax = fig.add_subplot(111, autoscale_on=False, xlim=(-2, 2), ylim=(-2, 2))
+#################################################### copy from jupyter
+
+fig, ax = plt.subplots(1,1)
+ax.set_xlim(-2*L,2*L)
+ax.set_ylim(-2*L,2*L)
+
+#### alternative way of doing the same thing
+#fig = plt.figure()
+#ax = fig.add_subplot(111, autoscale_on=False, xlim=(-2*L, 2*L), ylim=(-2*L, 2*L))
+
 ax.grid()
 
 line, = ax.plot([], [], 'o-', lw=2)
@@ -54,6 +60,7 @@ def init():
     line.set_data([], [])
     time_text.set_text('')
     return line, time_text
+    #pass
 
 def animate(i):
     thisx = [0, x1[i], x2[i]]
@@ -63,8 +70,8 @@ def animate(i):
     time_text.set_text(time_template%(i*dt))
     return line, time_text
 
-ani = animation.FuncAnimation(fig, animate, arange(1, len(t)),
-    interval=25, blit=False, init_func=init)
+#interval = delay between frames in milliseconds: default: 200
+ani = animation.FuncAnimation(fig, animate, arange(1, len(t)), interval=20, init_func=init, blit=True)
 
 #ani.save('double_pendulum.mp4', fps=15, clear_temp=True)
 plt.show()

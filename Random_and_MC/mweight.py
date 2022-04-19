@@ -2,7 +2,69 @@ from scipy import *
 from numpy import *
 from numpy import linalg
 from scipy import special
+from numba import jit
 
+@jit(nopython=True)
+def self_f0(x, self_kF, self_dexp, self_integral0):
+    if (x > self_kF): 
+        return (self_kF/x)**self_dexp/self_integral0
+    else:
+        return 1./self_integral0
+    
+@jit(nopython=True)
+def self_f1(x, ik, self_dh, self_Nbin, self_gx):
+    # we will use discrete approximation for gx(ik, x)
+    ip = int(x/self_dh)
+    if (ip >= self_Nbin): # outside the mesh for the function
+        return 0
+    res = self_gx[ik,ip]
+    return max(res,1e-16)
+
+@jit(nopython=True)
+def self_f1_off(x, ik, self_dh, self_Nbin, self_gx_off):
+    # off diagonal h-function
+    ip = int(x/self_dh)
+    if (ip >= self_Nbin): 
+        return 0
+    res = self_gx_off[ik,ip]
+    return max(res, 1e-16)
+
+@jit(nopython=True)
+def self_fm(momentum, self_self_consistent, self_kF, self_dexp, self_integral0, self_dh, self_Nbin, self_gx, self_gx_off):
+    PQ_new = 1.0
+    if not self_self_consistent:
+        for ik in range(1,len(momentum)):
+            k = linalg.norm(momentum[ik])
+            PQ_new *= self_f0( k, self_kF, self_dexp, self_integral0 )
+    else:
+        for ik in range(1,len(momentum)):
+            k = linalg.norm(momentum[ik])
+            PQ_new *= self_f1( k, ik, self_dh, self_Nbin, self_gx )
+        for ik in range(1,len(momentum)-1):
+            dkq = linalg.norm(momentum[ik]-momentum[-1])
+            PQ_new *= self_f1_off( dkq, ik, self_dh, self_Nbin, self_gx_off )
+    return PQ_new
+
+def self_Add_to_K_histogram(dk_hist, momentum, cutoffq, cutoffk, self_K_hist, self_Nbin, self_Nloops):
+    Q = linalg.norm(momentum[0])
+    # external variable histogram
+    if (Q < cutoffq):
+        iik = int( Q/cutoffq * self_Nbin )
+        self_K_hist[0,iik] += dk_hist
+    # histogram of other momenta, which we integrate over
+    for ik in range(1,self_Nloops):
+        k = linalg.norm(momentum[ik]);
+        if k < cutoffk:
+            iik = int( k/cutoffk * self_Nbin )
+            self_K_hist[ik,iik] += dk_hist/k**2
+    # histogram for variable differences. We choose to use
+    # the following combination of momenta
+    #  |k_0-k_{N-1}|,  |k_1-k_{N-1}|,  |k_2-k_{N-1}|, ...., |k_{N-2}-k_{N-1}|
+    for ik in range(self_Nloops-1):
+        k = linalg.norm(momentum[ik]-momentum[-1])
+        if k < cutoffk :
+            iik = int( k/cutoffk * self_Nbin )
+            self_K_hist[ik+self_Nloops,iik] += dk_hist/k**2
 
 class meassureWeight:
     """
@@ -30,6 +92,8 @@ class meassureWeight:
         self.dh = cutoff/Nbin
         # History of configurations
         self.K_hist = zeros((2*Nloops-1,Nbin))
+        self.gx     = zeros( (self.Nloops,self.Nbin) )
+        self.gx_off = zeros( (self.Nloops-1, self.Nbin) )
         
     def f0(self, x):
         if (x > self.kF): 
@@ -51,20 +115,21 @@ class meassureWeight:
         res = self.gx_off[ik,ip]
         return max(res, 1e-16)
     def __call__(self, momentum):
-        PQ_new = 1.0
-        if not self.self_consistent:
-            for ik in range(1,len(momentum)):
-                PQ_new *= self.f0( linalg.norm(momentum[ik]) )
-        else:
-            for ik in range(1,len(momentum)):
-                k = linalg.norm(momentum[ik])
-                PQ_new *= self.f1( k, ik )
-
-            for ik in range(1,len(momentum)-1):
-                dkq = linalg.norm(momentum[ik]-momentum[-1])
-                PQ_new *= self.f1_off( dkq, ik )
-        return PQ_new
-
+        #PQ_new = 1.0
+        #if not self.self_consistent:
+        #    for ik in range(1,len(momentum)):
+        #        PQ_new *= self.f0( linalg.norm(momentum[ik]) )
+        #else:
+        #    for ik in range(1,len(momentum)):
+        #        k = linalg.norm(momentum[ik])
+        #        PQ_new *= self.f1( k, ik )
+        #
+        #    for ik in range(1,len(momentum)-1):
+        #        dkq = linalg.norm(momentum[ik]-momentum[-1])
+        #        PQ_new *= self.f1_off( dkq, ik )
+        #return PQ_new
+        return self_fm(momentum, self.self_consistent, self.kF, self.dexp, self.integral0, self.dh, self.Nbin, self.gx, self.gx_off)
+        
     def Recompute(self, SaveData=True):
         self.gx     = zeros( (self.Nloops,self.Nbin) )
         self.gx_off = zeros( (self.Nloops-1, self.Nbin) )
@@ -130,18 +195,19 @@ class meassureWeight:
         #
         #  Norm = (4*pi*Dlt)^5/2^4 \sum_{i5} Integrate[ (i5+t)^{2-4} * g5[i5] * F_{g1}(i5,t) * F_{g2}(i5,t) * F_{g3}(i5,t) * F_{g4}(i5,t), {t,0,1}]
 
-        dsum = 0.
-        for i5 in range(self.Nbin):
-            Pt = poly1d([1.0]) # Starting with identity polynomial
-            for ik in range(self.Nloops-2,0,-1):
-                Pt *= Normalization_X1_X2( i5, self.Nbin, self.gx_off[ik,:], self.gx[ik,:] )
-            # Computes the integral Integrate[ (i5+t)^{-(Nloops-4)} * Pt(t), {t,0,1}]
-            dsum += CmpRationalIntegral(Pt, i5, 4-self.Nloops) * self.gx[-1,i5]
-        # Noff = Nloops-2
-        dsum *= ( 4*pi*self.dh**3)**(self.Nloops-1)/2**(self.Nloops-2)
-        # print " dsum, which should be close to unity=", dsum, " and 1-dsum=", 1-dsum
-        nrm = 1./dsum**(1./(self.Nloops-2.))
-        self.gx_off[:,:] *= nrm;
+        if self.Nloops>2:
+            dsum = 0.
+            for i5 in range(self.Nbin):
+                Pt = poly1d([1.0]) # Starting with identity polynomial
+                for ik in range(self.Nloops-2,0,-1):
+                    Pt *= Normalization_X1_X2( i5, self.Nbin, self.gx_off[ik,:], self.gx[ik,:] )
+                # Computes the integral Integrate[ (i5+t)^{-(Nloops-4)} * Pt(t), {t,0,1}]
+                dsum += CmpRationalIntegral(Pt, i5, 4-self.Nloops) * self.gx[-1,i5]
+            # Noff = Nloops-2
+            dsum *= ( 4*pi*self.dh**3)**(self.Nloops-1)/2**(self.Nloops-2)
+            # print " dsum, which should be close to unity=", dsum, " and 1-dsum=", 1-dsum
+            nrm = 1./dsum**(1./(self.Nloops-2.))
+            self.gx_off[:,:] *= nrm;
         
         if (SaveData):
             for ik in range(1,self.Nloops):
@@ -157,25 +223,26 @@ class meassureWeight:
 
 
     def Add_to_K_histogram(self, dk_hist, momentum, cutoffq, cutoffk):
-        Q = linalg.norm(momentum[0])
-        # external variable histogram
-        if (Q < cutoffq):
-            iik = int( Q/cutoffq * self.Nbin )
-            self.K_hist[0,iik] += dk_hist
-        # histogram of other momenta, which we integrate over
-        for ik in range(1,self.Nloops):
-            k = linalg.norm(momentum[ik]);
-            if k < cutoffk:
-                iik = int( k/cutoffk * self.Nbin )
-                self.K_hist[ik,iik] += dk_hist/k**2
-        # histogram for variable differences. We choose to use
-        # the following combination of momenta
-        #  |k_0-k_{N-1}|,  |k_1-k_{N-1}|,  |k_2-k_{N-1}|, ...., |k_{N-2}-k_{N-1}|
-        for ik in range(self.Nloops-1):
-            k = linalg.norm(momentum[ik]-momentum[-1])
-            if k < cutoffk :
-                iik = int( k/cutoffk * self.Nbin )
-                self.K_hist[ik+self.Nloops,iik] += dk_hist/k**2
+        self_Add_to_K_histogram(dk_hist, momentum, cutoffq, cutoffk, self.K_hist, self.Nbin, self.Nloops)
+        #Q = linalg.norm(momentum[0])
+        ## external variable histogram
+        #if (Q < cutoffq):
+        #    iik = int( Q/cutoffq * self.Nbin )
+        #    self.K_hist[0,iik] += dk_hist
+        ## histogram of other momenta, which we integrate over
+        #for ik in range(1,self.Nloops):
+        #    k = linalg.norm(momentum[ik]);
+        #    if k < cutoffk:
+        #        iik = int( k/cutoffk * self.Nbin )
+        #        self.K_hist[ik,iik] += dk_hist/k**2
+        ## histogram for variable differences. We choose to use
+        ## the following combination of momenta
+        ##  |k_0-k_{N-1}|,  |k_1-k_{N-1}|,  |k_2-k_{N-1}|, ...., |k_{N-2}-k_{N-1}|
+        #for ik in range(self.Nloops-1):
+        #    k = linalg.norm(momentum[ik]-momentum[-1])
+        #    if k < cutoffk :
+        #        iik = int( k/cutoffk * self.Nbin )
+        #        self.K_hist[ik+self.Nloops,iik] += dk_hist/k**2
         
     def Normalize_K_histogram(self):
         # We can get overflow during MPI for a long run. We should use a constant for normalization.
@@ -333,7 +400,7 @@ def CmpRationalIntegral(Pt, i_n, power):
     
     n = Pt.o
     if power>=0:
-        Cn = scipy.special.binom(power, range(power+1))
+        Cn = special.binom(power, range(power+1))
         i_n_2_k = 1.
         dsum = 0.0
         for k in range(power+1):

@@ -7,8 +7,8 @@ INTEGER Function Mandelb(z0, max_steps)
   INTEGER    :: i
   z=0.
   do i=1,max_steps
-     if (abs(z)>2.) then
-        Mandelb = i-1
+     if (abs(z)>2.) then ! |f(z)|>2 we know it will explode for large n, hence not part of the set.
+        Mandelb = i-1      ! return how many iterations it took to know this is not part of the set.
         return 
      end if
      z = z*z + z0
@@ -31,7 +31,7 @@ program mand
   INTEGER, parameter :: max_steps = 1000
   REAL*8  :: ext(4) = (/-2., 1., -1., 1./) ! The limits of plotting
   REAL*8  :: mande(Nx,Ny)
-  REAL    :: start, finish, startw, finishw
+  REAL*8  :: start, finish, startw, finishw
   
   call cpu_time(start)
   startw  = OMP_get_wtime()
@@ -39,8 +39,8 @@ program mand
   !$OMP PARALLEL DO  PRIVATE(j,x,y,z0)
   do i=1,Nx
      do j=1,Ny
-        x = ext(1) + (ext(2)-ext(1))*(i-1.)/(Nx-1.)
-        y = ext(3) + (ext(4)-ext(3))*(j-1.)/(Ny-1.)
+        x = ext(1) + (ext(2)-ext(1))*(i-1.)/(Nx-1.) ! x \in [ext(1)...ext(2)]
+        y = ext(3) + (ext(4)-ext(3))*(j-1.)/(Ny-1.) ! y \in [ext(3)...ext(4)]
         z0 = dcmplx(x,y)
         mande(i,j) = Mandelb(z0, max_steps)
      enddo

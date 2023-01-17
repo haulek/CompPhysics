@@ -1,13 +1,14 @@
-CC = g++-10
+CC = g++-12 
 F90 = gfortran
+CFLAGS = -O3 -fopenmp
 
 all : mandc mandf
 
 mandc : mandc.cc
-	$(CC) -O3 -fopenmp -o $@ $<
+	$(CC) $(CFLAGS) -o $@ $<
 
 mandf : mandf.f90
-	$(F90) -O3 -fopenmp -o $@ $<
+	$(F90) $(CFLAGS) -o $@ $<
 
 clean :
 	rm -f mandc mandf
